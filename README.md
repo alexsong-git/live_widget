@@ -24,20 +24,42 @@ playwright install chromium
 
 ## 运行
 
-默认会**打开浏览器窗口**（`pytest.ini` 里配置了 `--headed`）。
+**默认无头（headless）**：不打开真实 Chrome 窗口，适合本机批量跑和 CI。pytest-playwright 在未加 `--headed` 时即为无头。
 
 ```bash
 pytest
 ```
 
-需要无界面（例如 CI）时：
+需要**看着浏览器**调试时，加上 `--headed` 即可（可与其它参数一起用）：
+
+```bash
+pytest --headed
+```
+
+放慢操作便于观察（有头/无头均可）：
+
+```bash
+pytest --slowmo 500
+pytest --headed --slowmo 500
+```
+
+若不想使用 `pytest.ini` 里默认的 Allure 输出目录，可临时清空 addopts：
 
 ```bash
 pytest -o addopts=
 ```
 
-放慢操作便于观察：
+## Allure 报告与截图
+
+- 依赖里已包含 **`allure-pytest`**；默认会在项目根目录生成 **`allure-results/`**（见 `pytest.ini` 的 `--alluredir`）。
+- **成功**：对话标题「Live Support」出现后，会往 Allure 附加一张 **`Widget已打开`** 视口截图。
+- **失败**：在 `tests/conftest.py` 里用钩子附加 **`用例失败截图`**（当前视口；若已无 `page` 则不会附加）。
+
+跑完测试后生成/打开 HTML 报告需要本机安装 [Allure Commandline](https://github.com/allure-framework/allure2/releases)，例如：
 
 ```bash
-pytest --slowmo 500
+pytest
+allure serve allure-results
 ```
+
+默认已在 `pytest.ini` 里带上 `--alluredir=allure-results`，一般无需再写。

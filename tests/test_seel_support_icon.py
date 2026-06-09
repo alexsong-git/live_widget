@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
+import allure
 import openpyxl
 import pytest
 from playwright.sync_api import Page, expect
@@ -135,6 +136,7 @@ def enter_if_password(page: Page, password: str) -> None:
     ids=[urlparse(u).netloc for u, _ in SHOPS],
 )
 def test_live_widget(page: Page, shop_url: str, password: str) -> None:
+    allure.dynamic.title(f"Seel widget — {urlparse(shop_url).netloc}")
     # commit：收到响应、导航提交后即返回，不等待 DOMContentLoaded（部分店极慢但 widget 已注入）
     page.goto(shop_url, wait_until="commit", timeout=60_000)
     enter_if_password(page, password)
@@ -155,3 +157,8 @@ def test_live_widget(page: Page, shop_url: str, password: str) -> None:
 
     expect(page.get_by_role("heading", name=DIALOG_TITLE)).to_be_visible(timeout=30_000)
     page.wait_for_timeout(3_000)
+    allure.attach(
+        page.screenshot(full_page=False),
+        name="Widget已打开",
+        attachment_type=allure.attachment_type.PNG,
+    )
