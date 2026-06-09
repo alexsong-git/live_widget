@@ -1,0 +1,48 @@
+// 示例：Pipeline Job + PagerDuty（pytest 失败时 curl 触发电话）
+//
+// Jenkins 配置要点：
+// 1. Manage Jenkins → Credentials → 添加 Secret text，ID 填 pd-routing-key，值为 PagerDuty Events API v2 的 Integration Key
+// 2. 新建 Pipeline Job，Pipeline script from SCM 指向本仓库，Script Path 填 jenkins/Jenkinsfile.example
+//    或把本文件内容贴到「Pipeline script」里，并把 credentials('pd-routing-key') 的 ID 改成你建的凭据 ID
+//
+// 按需修改：agent、Python 路径、是否先跑 scripts/sync_widget_modes.py 等
+
+pipeline {
+  agent any
+
+  environment {
+    PD_ROUTING_KEY = credentials('pd-routing-key')
+  }
+
+  stages {
+    stage('Install') {
+      steps {
+        sh '''
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install -r requirements.txt
+          playwright install chromium
+        '''
+      }
+    }
+
+    stage('Test') {
+      steps {
+        sh '''
+          . .venv/bin/activate
+          pytest --alluredir=allure-results
+        '''
+      }
+    }
+  }
+
+  post {
+    failure {
+      sh """
+        curl -sS -X POST 'https://events.pagerduty.com/v2/enqueue' \\
+          -H 'Content-Type: application/json' \\
+          -d '{"routing_key":"${PD_ROUTING_KEY}","event_action":"trigger","payload":{"summary":"live_widget pytest failed","severity":"critical","source":"jenkins","custom_details":{"job":"${env.JOB_NAME}","build":"${env.BUILD_NUMBER}","url":"${env.BUILD_URL}"}}}'
+      """
+    }
+  }
+}

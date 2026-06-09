@@ -82,3 +82,7 @@ allure serve allure-results
 ```
 
 默认已在 `pytest.ini` 里带上 `--alluredir=allure-results`，一般无需再写。
+
+## Jenkins + PagerDuty（失败电话）
+
+凭据与 Pipeline 示例见目录 **`jenkins/`**（`Jenkinsfile.example` + `jenkins/README.md`）：在 Jenkins 里添加 **Secret text** 凭据保存 Integration Key，再用 Pipeline 的 `post { failure { curl ... } }` 即可。

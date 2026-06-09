@@ -1,0 +1,31 @@
+# Jenkins 接入 PagerDuty（pytest 失败电话告警）
+
+前提：PagerDuty **Events API v2** 的 Integration Key 已在本地用 `curl` 验证能建 Incident 并打电话。
+
+## 1. 在 Jenkins 里存 Key
+
+1. **Manage Jenkins → Credentials**（或你 Job 所在 folder 的 Credentials）。  
+2. **Add Credentials**，类型选 **Secret text**。  
+3. **Secret**：粘贴 Integration Key。  
+4. **ID**：例如 `pd-routing-key`（须与 `Jenkinsfile.example` 里 `credentials('pd-routing-key')` 一致）。  
+5. 保存。
+
+## 2. 方式 A：Pipeline Job（推荐）
+
+1. **New Item** → 选 **Pipeline**，起名后保存。  
+2. **Pipeline** 区域二选一：  
+   - **Pipeline script from SCM**：连接 Git 仓库，`Script Path` 填 `jenkins/Jenkinsfile.example`；或  
+   - **Pipeline script**：把 `Jenkinsfile.example` 全文粘贴进去，并改 `agent`、`pip` 路径、`credentials('...')` 的 ID。  
+3. 保存后 **Build Now**。故意让 `pytest` 失败一次，应收到 PagerDuty 电话；成功则不应触发 `post { failure { ... } }`。
+
+## 3. 方式 B：Freestyle Job
+
+1. **New Item** → **Freestyle project**。  
+2. **Build** → **Execute shell** 里写安装依赖 + `pytest`（与本地一致）。  
+3. **构建后操作** → **Add post-build action** → 若有 **Conditional steps (single)** 或 **Post build task**：选 **Execute only if build failed**，在 shell 里写与本地验证相同的 `curl`（JSON 里 `routing_key` 不能写死）。  
+4. Freestyle 默认不好注入 Secret，需装 **Credentials Binding** 相关插件，或在 **Build Environment** 勾选 **Use secret text(s) or file(s)**，把变量绑成 `PD_ROUTING_KEY`，再在失败步骤里 `$PD_ROUTING_KEY`。若插件组合复杂，优先用 **Pipeline**。
+
+## 4. 注意
+
+- `post { failure { sh """ ... """ } }` 必须用 **三引号双引号**，Groovy 才会展开 `${PD_ROUTING_KEY}`。  
+- Agent 上需有 `curl`；无外网则无法访问 `events.pagerduty.com`。
