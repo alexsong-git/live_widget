@@ -6,15 +6,38 @@
 //    或把本文件内容贴到「Pipeline script」里，并把 credentials('pd-routing-key') 的 ID 改成你建的凭据 ID
 //
 // 按需修改：agent、Python 路径、是否先跑 scripts/sync_widget_modes.py 等
+//
+// workspace：Pipeline 同样有 WORKSPACE；默认复用目录。若遇脏 venv/旧报告，可勾选参数
+// CLEAN_BUILD_ARTIFACTS 做轻量清理；要「每次整目录清空」见 jenkins/README.md（cleanWs / SCM 选项）。
+//
+// Allure：pytest 写入 allure-results/（pytest.ini）。Jenkins 上可点开报告需：
+//   - 安装插件「Allure」（Allure Jenkins Plugin）
+//   - Manage Jenkins → Tools → Allure Commandline：配置自动安装或本机路径
+// 构建完成后：进入该次构建页面 → 左侧「Allure Report」
 
 pipeline {
   agent any
+
+  parameters {
+    booleanParam(
+      name: 'CLEAN_BUILD_ARTIFACTS',
+      defaultValue: false,
+      description: '构建前删除 .venv、allure-results、.pytest_cache（不删整个仓库目录）'
+    )
+  }
 
   environment {
     PD_ROUTING_KEY = credentials('pd-routing-key')
   }
 
   stages {
+    stage('Optional clean') {
+      when { expression { return params.CLEAN_BUILD_ARTIFACTS } }
+      steps {
+        sh 'rm -rf .venv allure-results .pytest_cache'
+      }
+    }
+
     stage('Install') {
       steps {
         sh '''
@@ -37,6 +60,19 @@ pipeline {
   }
 
   post {
+    always {
+      script {
+        if (fileExists('allure-results')) {
+          allure([
+            includeProperties: false,
+            jdk: '',
+            properties: [],
+            reportBuildPolicy: 'ALWAYS',
+            results: [[path: 'allure-results']],
+          ])
+        }
+      }
+    }
     failure {
       sh """
         curl -sS -X POST 'https://events.pagerduty.com/v2/enqueue' \\
