@@ -17,10 +17,29 @@ playwright install chromium
 - 可选列 **`STATUS`**：若表头中有该列，则**仅 `STATUS` 为 `0` 的行**会生成用例（其它数字或非数字视为不跑）；无此列时行为与以前相同，所有非空 URL 行都会跑
 - 从第 2 行起：按表头 **`URL`** 读店铺地址，按 **`PASSWORD`** 读密码店前台密码（无密码店可留空）
 - 其余列忽略；每一行会生成一条用例
+- 若使用 **`MERCHANTID`** 列：可先运行下面的同步脚本，把接口返回的 **`runMode`** 写入 **`MODE`** 列（脚本会自动创建 `MODE` 表头若不存在）
 
 若主题弹出广告/订阅窗遮挡点击，用例会先 **连按 Esc**、再尝试点常见 **Close** 按钮；仍失败会对图标使用 **`force` 点击** 作为兜底。个别主题可在 `tests/test_seel_support_icon.py` 的 `try_close_popups` 里补充关闭按钮选择器。
 
 仓库里附带了一份示例表，可按行增删店铺。
+
+## 同步 widget runMode 到 Excel（可选）
+
+表内需有 **`MERCHANTID`** 列（不区分大小写）。脚本会请求 Seel 接口 `get-connector-config`（`connectorSource=WIDGET`），把返回的 **`data.runMode`** 写回 **`MODE`** 列；若 **`MODE` 不是 `PRODUCTION`**（大小写不敏感），或该行接口失败，则把该行 **`STATUS`** 置为 **`1`**（与 pytest 里「只跑 `STATUS=0`」一致，用于跳过非生产 widget）。若无 **`STATUS`** 表头会自动追加一列。
+
+```bash
+python scripts/sync_widget_modes.py
+```
+
+建议跑图标 UI 测试前先同步，再执行 pytest，例如：
+
+```bash
+python scripts/sync_widget_modes.py && pytest
+```
+
+- 同一 `merchantId` 多行时只请求接口一次（内存缓存）。
+- **`MODE` 为 `PRODUCTION`** 时**不会**改该行 `STATUS`（保留你在表里的原值）。
+- 某行接口失败时，该行 **`MODE`** 会写成 `ERROR: …`（截断），**`STATUS=1`**，脚本退出码为 `1`；成功的行仍会保存。
 
 ## 运行
 
