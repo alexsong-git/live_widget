@@ -37,7 +37,7 @@
 | 做法 | 适用 |
 |------|------|
 | **不清理**（默认） | 构建快；依赖以 `pip install` 为主、可重复执行。 |
-| **轻量清理**（本仓库 `Jenkinsfile.example` 里参数 **CLEAN_BUILD_ARTIFACTS**） | 怀疑 `.venv` / `allure-results` / `.pytest_cache` 脏了，勾选一次再构建。 |
+| **轻量清理** | 在 **Execute shell** 最前面自行加 `rm -rf .venv allure-results .pytest_cache`；或见 Freestyle 文档。 |
 | **整 workspace 清空** | 需要「接近全新 clone」时：装 **Workspace Cleanup** 插件后在 Pipeline 里 `cleanWs()`；或在 Job 的 **Git 高级行为** 里勾选 **Wipe out repository & force clone**（仅影响 SCM 目录，不等价于删整个 workspace，但常够用）。 |
 
 全量 `cleanWs()` 会 **删掉未入库文件**，构建更慢；一般 CI 用 **按需清理** 或 **只删构建产物** 即可。
