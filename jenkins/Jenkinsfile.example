@@ -37,8 +37,10 @@ pipeline {
 
     stage('Test') {
       steps {
+        // 先删 allure-results，避免 allure-pytest 在同目录不断追加导致文件越来越多
         sh '''
           . .venv/bin/activate
+          rm -rf allure-results
           pytest --alluredir=allure-results
         '''
       }

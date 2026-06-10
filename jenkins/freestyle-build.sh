@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Freestyle Job「Execute shell」里可：bash jenkins/freestyle-build.sh
 # 需在同一 shell 前注入环境变量 PD_ROUTING_KEY（见 jenkins/FREESTYLE.md）
-# 流程：venv → 依赖 → sync_widget_modes.py（改 Excel，需外网）→ playwright → pytest
+# 流程：… → playwright → 清空 allure-results → pytest（避免多次运行堆积旧结果）
 
 set -u
 
@@ -12,6 +12,7 @@ pip install -r requirements.txt
 python scripts/sync_widget_modes.py
 playwright install chromium
 
+rm -rf allure-results
 pytest --alluredir=allure-results
 RC=$?
 

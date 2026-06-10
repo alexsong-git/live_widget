@@ -74,7 +74,7 @@ pytest -o addopts=
 
 ## Allure 报告与截图
 
-- 依赖里已包含 **`allure-pytest`**；默认会在项目根目录生成 **`allure-results/`**（见 `pytest.ini` 的 `--alluredir`）。
+- 依赖里已包含 **`allure-pytest`**；默认会在项目根目录生成 **`allure-results/`**（见 `pytest.ini` 的 `--alluredir`）。**多次运行会在该目录里累积历史结果**；本地可先删再跑：`rm -rf allure-results && pytest`。Jenkins 上 **`jenkins/freestyle-build.sh` / `Jenkinsfile.example`** 已在每次 **`pytest` 前执行 `rm -rf allure-results`**。
 - **成功**：对话标题「Live Support」出现后，会往 Allure 附加一张 **`Widget已打开`** 视口截图。
 - **失败**：在 `tests/conftest.py` 里用钩子附加 **`用例失败截图`**（当前视口；若已无 `page` 则不会附加）。
 
