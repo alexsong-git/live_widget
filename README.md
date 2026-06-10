@@ -23,15 +23,19 @@ playwright install chromium
 
 仓库里附带了一份示例表，可按行增删店铺。
 
-## 同步 widget runMode 到 Excel（可选）
+## 同步 widget runMode 到 Excel
 
 表内需有 **`MERCHANTID`** 列（不区分大小写）。脚本会请求 Seel 接口 `get-connector-config`（`connectorSource=WIDGET`），把返回的 **`data.runMode`** 写回 **`MODE`** 列；若 **`MODE` 不是 `PRODUCTION`**（大小写不敏感），或该行接口失败，则把该行 **`STATUS`** 置为 **`1`**（与 pytest 里「只跑 `STATUS=0`」一致，用于跳过非生产 widget）。若无 **`STATUS`** 表头会自动追加一列。
+
+**Jenkins**：`jenkins/freestyle-build.sh` 与 `jenkins/Jenkinsfile.example` 已在 **`pytest` 前自动执行** `python scripts/sync_widget_modes.py`（需外网、会更新仓库中的 `live_widget登陆店铺.xlsx`）。
+
+本地可单独执行：
 
 ```bash
 python scripts/sync_widget_modes.py
 ```
 
-建议跑图标 UI 测试前先同步，再执行 pytest，例如：
+或手动先同步再跑测：
 
 ```bash
 python scripts/sync_widget_modes.py && pytest

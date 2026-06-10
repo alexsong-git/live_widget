@@ -5,8 +5,9 @@
 // 2. 新建 Pipeline Job，Pipeline script from SCM 指向本仓库，Script Path 填 jenkins/Jenkinsfile.example
 //    或把本文件内容贴到「Pipeline script」里，并把 credentials('pd-routing-key') 的 ID 改成你建的凭据 ID
 //
-// 按需修改：agent、Python 路径、是否先跑 scripts/sync_widget_modes.py 等
+// 按需修改：agent、Python 路径等
 //
+// 流程：Install（含 sync_widget_modes.py 更新 Excel）→ Test（pytest）
 // workspace：默认复用；需要清空时见 jenkins/README.md（cleanWs / Job 勾选等）。
 //
 // Allure：pytest 写入 allure-results/（pytest.ini）。Jenkins 上可点开报告需：
@@ -28,6 +29,7 @@ pipeline {
           python3 -m venv .venv
           . .venv/bin/activate
           pip install -r requirements.txt
+          python scripts/sync_widget_modes.py
           playwright install chromium
         '''
       }

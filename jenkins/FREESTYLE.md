@@ -27,6 +27,7 @@
 3. **Build Environment**（构建环境）：  
    - 勾选 **Use secret text(s) or file(s)**（来自 **Credentials Binding**）。  
    - **Add** → **Secret text**：**Variable** 填 `PD_ROUTING_KEY`，**Credentials** 选上一步的 `pd-routing-key`。  
+   - `freestyle-build.sh` 会在 **`pytest` 之前** 始终执行 **`python scripts/sync_widget_modes.py`**（访问外网 API、改写仓库中的 `live_widget登陆店铺.xlsx`），请确保 Agent 能访问 Seel 接口且工作区含该 Excel。
 4. **Build（构建）** → **Execute shell**（Linux agent；Windows 请改用「Execute Windows batch」并自行改命令）：
 
 ```bash

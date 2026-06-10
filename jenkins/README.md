@@ -18,7 +18,7 @@
 2. 凭据里存 PagerDuty **Integration Key**，ID 如 `pd-routing-key`。  
 3. Freestyle Job：**Git 检出** → **Build Environment** 勾选 **Use secret text**，变量 **`PD_ROUTING_KEY`** 绑定该凭据 → **Execute shell**：`bash jenkins/freestyle-build.sh` → **Post-build Actions → Allure Report**，路径 **`allure-results`**。
 
-脚本逻辑与 Pipeline 一致：`pytest` 失败且设置了 `PD_ROUTING_KEY` 时 `curl` 调 PagerDuty。
+脚本逻辑：**`pip install` → `python scripts/sync_widget_modes.py`（必跑）→ `playwright` → `pytest`**；失败且设置了 `PD_ROUTING_KEY` 时 `curl` 调 PagerDuty。
 
 ## 3. 方式 B：Pipeline Job
 
@@ -28,7 +28,7 @@
    - **Pipeline script**：把 `Jenkinsfile.example` 全文粘贴进去，并改 `agent`、`pip` 路径、`credentials('...')` 的 ID。  
 3. 保存后 **Build Now**。故意让 `pytest` 失败一次，应收到 PagerDuty 电话；成功则不应触发 `post { failure { ... } }`。
 
-不熟 Pipeline 时优先用 **§2 Freestyle + [`FREESTYLE.md`](FREESTYLE.md)**。
+不熟 Pipeline 时优先用 **§2 Freestyle + [`FREESTYLE.md`](FREESTYLE.md)**。Pipeline 与 Freestyle 均在 **`pytest` 前执行** `scripts/sync_widget_modes.py`。
 
 ## 4. Workspace 要不要每次清理？
 
