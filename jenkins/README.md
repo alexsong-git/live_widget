@@ -10,7 +10,17 @@
 4. **ID**：例如 `pd-routing-key`（须与 `Jenkinsfile.example` 里 `credentials('pd-routing-key')` 一致）。  
 5. 保存。
 
-## 2. 方式 A：Pipeline Job（推荐）
+## 2. 方式 A：Freestyle（不用 Pipeline，推荐不熟 Groovy 时用）
+
+**完整图文步骤见 [`FREESTYLE.md`](FREESTYLE.md)**。概要：
+
+1. 安装插件：**Allure**、**Credentials Binding**；Tools 里配置 **Allure Commandline**。  
+2. 凭据里存 PagerDuty **Integration Key**，ID 如 `pd-routing-key`。  
+3. Freestyle Job：**Git 检出** → **Build Environment** 勾选 **Use secret text**，变量 **`PD_ROUTING_KEY`** 绑定该凭据 → **Execute shell**：`bash jenkins/freestyle-build.sh` → **Post-build Actions → Allure Report**，路径 **`allure-results`**。
+
+脚本逻辑与 Pipeline 一致：`pytest` 失败且设置了 `PD_ROUTING_KEY` 时 `curl` 调 PagerDuty。
+
+## 3. 方式 B：Pipeline Job
 
 1. **New Item** → 选 **Pipeline**，起名后保存。  
 2. **Pipeline** 区域二选一：  
@@ -18,12 +28,7 @@
    - **Pipeline script**：把 `Jenkinsfile.example` 全文粘贴进去，并改 `agent`、`pip` 路径、`credentials('...')` 的 ID。  
 3. 保存后 **Build Now**。故意让 `pytest` 失败一次，应收到 PagerDuty 电话；成功则不应触发 `post { failure { ... } }`。
 
-## 3. 方式 B：Freestyle Job
-
-1. **New Item** → **Freestyle project**。  
-2. **Build** → **Execute shell** 里写安装依赖 + `pytest`（与本地一致）。  
-3. **构建后操作** → **Add post-build action** → 若有 **Conditional steps (single)** 或 **Post build task**：选 **Execute only if build failed**，在 shell 里写与本地验证相同的 `curl`（JSON 里 `routing_key` 不能写死）。  
-4. Freestyle 默认不好注入 Secret，需装 **Credentials Binding** 相关插件，或在 **Build Environment** 勾选 **Use secret text(s) or file(s)**，把变量绑成 `PD_ROUTING_KEY`，再在失败步骤里 `$PD_ROUTING_KEY`。若插件组合复杂，优先用 **Pipeline**。
+不熟 Pipeline 时优先用 **§2 Freestyle + [`FREESTYLE.md`](FREESTYLE.md)**。
 
 ## 4. Workspace 要不要每次清理？
 
@@ -37,9 +42,12 @@
 
 全量 `cleanWs()` 会 **删掉未入库文件**，构建更慢；一般 CI 用 **按需清理** 或 **只删构建产物** 即可。
 
-## 5. Allure 报告在 Pipeline 里怎么配？
+## 5. Allure 报告（Pipeline 与 Freestyle）
 
-`jenkins/Jenkinsfile.example` 已在 **`post { always { ... } }`** 里启用 **`allure([...])`**（若存在 **`allure-results/`** 目录则发布；与 `pytest.ini` 的 `--alluredir` 一致）。
+- **Freestyle**：**Post-build Actions → Allure Report**，路径 **`allure-results`**，见 [`FREESTYLE.md`](FREESTYLE.md)。  
+- **Pipeline**：`jenkins/Jenkinsfile.example` 里 **`post { always { allure(...) } }`**（若存在 `allure-results/`）。
+
+两者都需安装 **Allure Jenkins Plugin**，并在 **Manage Jenkins → Tools** 配置 **Allure Commandline**。构建完成后：**该次构建页 → 左侧 Allure Report**。
 
 ### 你必须在 Jenkins 里做好的两件事（一次性）
 
@@ -52,12 +60,13 @@
 
 ### 数据从哪来
 
-- **`pytest.ini`** 里已有 **`--alluredir=allure-results`**；Pipeline 里跑的 **`pytest`** 会在 workspace 下生成 **`allure-results/`**。  
-- `allure(...)` 读取该目录生成 Jenkins 上的 HTML 入口。
+- **`pytest.ini`** 里已有 **`--alluredir=allure-results`**；**`pytest`** 会在 workspace 下生成 **`allure-results/`**。  
+- Allure 插件读取该目录生成 Jenkins 上的 HTML 入口。
 
 若不用 Allure 插件：把 **`allure-results/`** 打成 artifact 下载后，本机执行 **`allure serve allure-results`**。
 
 ## 6. 注意
 
-- `post { failure { sh """ ... """ } }` 必须用 **三引号双引号**，Groovy 才会展开 `${PD_ROUTING_KEY}`。  
+- **Pipeline**：`post { failure { sh """ ... """ } }` 必须用 **三引号双引号**，Groovy 才会展开 `${PD_ROUTING_KEY}`。  
+- **Freestyle**：用 `jenkins/freestyle-build.sh` + 环境变量 **`PD_ROUTING_KEY`**，无 Groovy。  
 - Agent 上需有 `curl`；无外网则无法访问 `events.pagerduty.com`。
