@@ -22,28 +22,30 @@ def browser_context_args(browser_context_args, tmp_path):
 
 @pytest.fixture
 def page(page: Page, request: pytest.FixtureRequest):
-    def attach_failure_video() -> None:
-        rep = getattr(request.node, "rep_call", None)
-        if not rep or not rep.failed:
-            return
-        try:
-            video = page.video
-            if not video:
-                return
-            path = video.path()
-            if not path or not Path(path).is_file():
-                return
-            allure.attach.file(
-                path,
-                name="用例失败录屏",
-                attachment_type=allure.attachment_type.WEBM,
-                extension="webm",
-            )
-        except Exception:
-            return
-
-    request.addfinalizer(attach_failure_video)
     yield page
+    rep = getattr(request.node, "rep_call", None)
+    if not rep or not rep.failed:
+        return
+    # Playwright 仅在 page 关闭后才会落盘 webm
+    try:
+        page.close()
+    except Exception:
+        pass
+    try:
+        video = page.video
+        if not video:
+            return
+        path = video.path()
+        if not path or not Path(path).is_file():
+            return
+        allure.attach.file(
+            path,
+            name="用例失败录屏",
+            attachment_type=allure.attachment_type.WEBM,
+            extension="webm",
+        )
+    except Exception:
+        return
 
 
 @pytest.hookimpl(hookwrapper=True)
