@@ -1,13 +1,13 @@
 """Excel 驱动：进店 → 尽量关掉弹窗 → 点图标 → 对话窗口出现。"""
 
-import re
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
 import allure
 import openpyxl
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page
 
 ICON = ".seel_ai_support_icon.inline-block"
 DIALOG_TITLE = "Live Support"
@@ -97,6 +97,30 @@ def read_shops() -> list[tuple[str, str]]:
 SHOPS = read_shops()
 
 
+def _fail_brief(page: Page, summary: str, *, shop_url: str | None = None) -> None:
+    """失败时只输出几行关键信息，避免 expect() 附带整页无障碍树。"""
+    lines = [summary.rstrip()]
+    if shop_url:
+        lines.append(f"表格 URL host: {urlparse(shop_url).netloc!r}")
+    lines.append(f"当前 page.url: {page.url!r}")
+    lines.append("详情见 Allure「用例失败截图」。")
+    pytest.fail("\n".join(lines), pytrace=False)
+
+
+def _wait_visible(
+    page: Page,
+    shop_url: str,
+    locator,
+    *,
+    timeout_ms: int,
+    summary: str,
+) -> None:
+    try:
+        locator.wait_for(state="visible", timeout=timeout_ms)
+    except Exception:
+        _fail_brief(page, f"{summary}（{timeout_ms // 1000}s 超时）", shop_url=shop_url)
+
+
 def try_close_popups(page: Page) -> None:
     """Esc + 点常见关闭钮；关不掉就忽略（各店主题不一样）。"""
     for _ in range(3):
@@ -124,10 +148,14 @@ def enter_if_password(page: Page, password: str) -> None:
     if "/password" not in page.url:
         return
     if not password:
-        pytest.fail("进了密码页，但 Excel 里这一行 PASSWORD 列为空")
+        _fail_brief(page, "进了密码页，但 Excel 里该行 PASSWORD 列为空")
     page.locator("#password").fill(password)
     page.get_by_role("button", name="Enter").click()
-    expect(page).not_to_have_url(re.compile(r"/password"), timeout=30_000)
+    deadline = time.monotonic() + 30.0
+    while "/password" in page.url:
+        if time.monotonic() > deadline:
+            _fail_brief(page, "密码页：点 Enter 后 30s 内 URL 仍含 /password")
+        page.wait_for_timeout(200)
 
 
 @pytest.mark.parametrize(
@@ -145,7 +173,13 @@ def test_live_widget(page: Page, shop_url: str, password: str) -> None:
     try_close_popups(page)
 
     icon = page.locator(ICON).first
-    expect(icon).to_be_visible(timeout=90_000)
+    _wait_visible(
+        page,
+        shop_url,
+        icon,
+        timeout_ms=90_000,
+        summary=f"未看到 Seel 图标（选择器 {ICON!r}）",
+    )
     icon.scroll_into_view_if_needed()
     try_close_popups(page)
 
@@ -153,9 +187,18 @@ def test_live_widget(page: Page, shop_url: str, password: str) -> None:
         icon.click(timeout=20_000)
     except Exception:
         try_close_popups(page)
-        icon.click(timeout=20_000, force=True)
+        try:
+            icon.click(timeout=20_000, force=True)
+        except Exception:
+            _fail_brief(page, "点击 Seel 图标失败（含 force 重试）", shop_url=shop_url)
 
-    expect(page.get_by_role("heading", name=DIALOG_TITLE)).to_be_visible(timeout=30_000)
+    _wait_visible(
+        page,
+        shop_url,
+        page.get_by_role("heading", name=DIALOG_TITLE),
+        timeout_ms=30_000,
+        summary=f"点击图标后未出现对话标题 {DIALOG_TITLE!r}（heading）",
+    )
     page.wait_for_timeout(3_000)
     allure.attach(
         page.screenshot(full_page=False),

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-从 Seel 接口拉取各 merchant 的 widget runMode，写回「live_widget登陆店铺.xlsx」的 MODE 列；
-若 MODE 不是 PRODUCTION，则将该行 STATUS 置为 1（pytest 仅跑 STATUS=0 的店）。
+从 Seel 接口拉取各 merchant 的 widget runMode、themeInstalled，写回「live_widget登陆店铺.xlsx」；
+若 MODE 不是 PRODUCTION，或 themeInstalled 不是 true，则将该行 STATUS 置为 1（pytest 仅跑 STATUS=0 的店）。
 
 用法（在项目根目录）::
 
@@ -29,6 +29,7 @@ CONNECTOR_SOURCE = "WIDGET"
 
 MERCHANT_HEADER = "MERCHANTID"
 MODE_HEADER = "MODE"
+THEME_INSTALLED_HEADER = "THEMEINSTALLED"
 STATUS_HEADER = "STATUS"
 
 # 与浏览器请求尽量一致（接口若校验 UA/Accept 时更稳）
@@ -69,8 +70,16 @@ def _ensure_column(ws: openpyxl.worksheet.worksheet.Worksheet, col: dict[str, in
     return new_c
 
 
-def fetch_run_mode(merchant_id: str, timeout_s: float = 60.0) -> str:
-    """请求接口，返回 data.runMode 字符串。"""
+def _parse_theme_installed(raw: object) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        raise RuntimeError("响应 installation 中缺少 themeInstalled")
+    return str(raw).strip().casefold() == "true"
+
+
+def fetch_connector_config(merchant_id: str, timeout_s: float = 60.0) -> tuple[str, bool]:
+    """请求接口，返回 (runMode, themeInstalled)。"""
     q = urlencode({"merchantId": merchant_id.strip(), "connectorSource": CONNECTOR_SOURCE})
     url = f"{API_BASE}?{q}"
     req = Request(url, headers=DEFAULT_HEADERS, method="GET")
@@ -86,12 +95,20 @@ def fetch_run_mode(merchant_id: str, timeout_s: float = 60.0) -> str:
     mode = data.get("runMode")
     if mode is None:
         raise RuntimeError("响应 data 中缺少 runMode")
-    return str(mode).strip()
+    config = data.get("config")
+    if not isinstance(config, dict):
+        raise RuntimeError("响应 data 中缺少 config 对象")
+    installation = config.get("installation")
+    if not isinstance(installation, dict):
+        raise RuntimeError("响应 config 中缺少 installation 对象")
+    theme_installed = _parse_theme_installed(installation.get("themeInstalled"))
+    return str(mode).strip(), theme_installed
 
 
 def sync_excel_modes(excel_path: Path | None = None) -> int:
     """
-    读取 MERCHANTID，写入 MODE；MODE 非 PRODUCTION 或接口失败时将该行 STATUS 置为 1。
+    读取 MERCHANTID，写入 MODE、THEMEINSTALLED；
+    MODE 非 PRODUCTION、themeInstalled 非 true 或接口失败时将该行 STATUS 置为 1。
     成功返回 0；有行失败返回 1（仍会尽量写回其它行）。
     """
     path = excel_path or DEFAULT_EXCEL
@@ -112,9 +129,17 @@ def sync_excel_modes(excel_path: Path | None = None) -> int:
             return 1
         mid_col = col[mid_key]
         mode_col = _ensure_column(ws, col, MODE_HEADER)
+        theme_key = THEME_INSTALLED_HEADER.casefold()
+        if theme_key not in col:
+            print(
+                f"错误: 表头第一行须包含 {THEME_INSTALLED_HEADER!r} 列（当前表头已扫描）。",
+                file=sys.stderr,
+            )
+            return 1
+        theme_col = col[theme_key]
         status_col = _ensure_column(ws, col, STATUS_HEADER)
 
-        cache: dict[str, str] = {}
+        cache: dict[str, tuple[str, bool]] = {}
         errors: list[str] = []
         max_r = ws.max_row or 1
 
@@ -122,20 +147,30 @@ def sync_excel_modes(excel_path: Path | None = None) -> int:
             raw_mid = ws.cell(r, mid_col).value
             if raw_mid is None or str(raw_mid).strip() == "":
                 ws.cell(r, mode_col).value = None
+                ws.cell(r, theme_col).value = None
                 continue
 
             merchant_id = str(raw_mid).strip()
             try:
                 if merchant_id in cache:
-                    mode = cache[merchant_id]
+                    mode, theme_installed = cache[merchant_id]
                 else:
-                    mode = fetch_run_mode(merchant_id)
-                    cache[merchant_id] = mode
+                    mode, theme_installed = fetch_connector_config(merchant_id)
+                    cache[merchant_id] = (mode, theme_installed)
                 ws.cell(r, mode_col).value = mode
-                line = f"行 {r}: merchantId={merchant_id} -> MODE={mode}"
+                ws.cell(r, theme_col).value = theme_installed
+                line = (
+                    f"行 {r}: merchantId={merchant_id} -> MODE={mode}, "
+                    f"{THEME_INSTALLED_HEADER}={theme_installed}"
+                )
+                skip_reasons: list[str] = []
                 if mode.casefold() != "production":
+                    skip_reasons.append("非 PRODUCTION")
+                if theme_installed is not True:
+                    skip_reasons.append(f"{THEME_INSTALLED_HEADER} 非 true")
+                if skip_reasons:
                     ws.cell(r, status_col).value = 1
-                    line += " -> STATUS=1（非 PRODUCTION）"
+                    line += f" -> STATUS=1（{'；'.join(skip_reasons)}）"
                 print(line)
             except (HTTPError, URLError, OSError, TimeoutError, RuntimeError, json.JSONDecodeError) as e:
                 err = f"行 {r} merchantId={merchant_id!r}: {e}"
