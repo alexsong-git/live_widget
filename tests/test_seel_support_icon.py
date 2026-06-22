@@ -1,4 +1,4 @@
-"""Excel 驱动：进店 → 尽量关掉弹窗 → 点图标 → 对话窗口出现。"""
+"""Excel 驱动：进店 → 图标一出现即强行点击 → 对话窗口出现。"""
 
 from __future__ import annotations
 
@@ -123,27 +123,41 @@ def _wait_visible(
         _fail_brief(page, f"{summary}（{timeout_ms // 1000}s 超时）", shop_url=shop_url)
 
 
-def try_close_popups(page: Page) -> None:
-    """Esc + 点常见关闭钮；关不掉就忽略（各店主题不一样）。"""
-    for _ in range(3):
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(150)
+def force_click_icon(page: Page, icon, shop_url: str) -> None:
+    """无视遮挡层，对 widget 图标强行触发点击。"""
+    try:
+        icon.evaluate("el => el.click()")
+        return
+    except Exception:
+        pass
+    try:
+        icon.click(force=True, timeout=3_000)
+        return
+    except Exception:
+        _fail_brief(page, "强行点击 Seel 图标失败（JS click / force）", shop_url=shop_url)
 
-    # 常见无障碍「关闭」按钮（可按你们实际店铺再补充选择器）
-    for sel in (
-        'button[aria-label="Close"]',
-        'button[aria-label="close"]',
-        '[aria-label="Close"]',
-        'button[aria-label="關閉"]',
-        '[data-testid="close-button"]',
-        "dialog button.close",
-    ):
-        btn = page.locator(sel).first
+
+def wait_icon_and_force_click(
+    page: Page,
+    shop_url: str,
+    *,
+    timeout_ms: int = 90_000,
+) -> None:
+    """轮询 DOM，图标一挂载就立刻强行点击。"""
+    icon = page.locator(ICON).first
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
         try:
-            btn.click(timeout=900)
-            page.wait_for_timeout(150)
+            icon.wait_for(state="attached", timeout=200)
+            force_click_icon(page, icon, shop_url)
+            return
         except Exception:
-            continue
+            page.wait_for_timeout(50)
+    _fail_brief(
+        page,
+        f"未找到 Seel 图标（选择器 {ICON!r}）",
+        shop_url=shop_url,
+    )
 
 
 def enter_if_password(page: Page, password: str) -> None:
@@ -171,28 +185,7 @@ def test_live_widget(page: Page, shop_url: str, password: str) -> None:
     page.goto(shop_url, wait_until="commit", timeout=60_000)
     enter_if_password(page, password)
 
-    page.wait_for_timeout(600)
-    try_close_popups(page)
-
-    icon = page.locator(ICON).first
-    _wait_visible(
-        page,
-        shop_url,
-        icon,
-        timeout_ms=90_000,
-        summary=f"未看到 Seel 图标（选择器 {ICON!r}）",
-    )
-    icon.scroll_into_view_if_needed()
-    try_close_popups(page)
-
-    try:
-        icon.click(timeout=20_000)
-    except Exception:
-        try_close_popups(page)
-        try:
-            icon.click(timeout=20_000, force=True)
-        except Exception:
-            _fail_brief(page, "点击 Seel 图标失败（含 force 重试）", shop_url=shop_url)
+    wait_icon_and_force_click(page, shop_url)
 
     _wait_visible(
         page,
