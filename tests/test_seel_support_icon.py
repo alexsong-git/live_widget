@@ -251,6 +251,7 @@ def wait_icon_and_open_widget(
     if _is_dialog_open(page):
         return
 
+    match_count = page.locator(ICON).count()
     if saw_icon or match_count > 0:
         _fail_brief(
             page,
