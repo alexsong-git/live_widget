@@ -1,5 +1,7 @@
 """Excel 驱动：进店 → 尽量关掉弹窗 → 点图标 → 对话窗口出现。"""
 
+from __future__ import annotations
+
 import time
 from pathlib import Path
 from urllib.parse import urlparse
