@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,7 +15,7 @@ from playwright.sync_api import Page
 ICON = ".seel_ai_support_icon"
 DIALOG_TITLE = "Live Support"
 ICON_WAIT_MS = 120_000
-DIALOG_AFTER_CLICK_MS = 3_000
+DIALOG_AFTER_CLICK_MS = 10_000
 EXCEL = Path(__file__).resolve().parent.parent / "live_widget登陆店铺.xlsx"
 
 URL_HEADER = "URL"
@@ -127,8 +128,30 @@ def _icon_locator(page: Page):
     return page.locator(ICON).first
 
 
-def _dialog_locator(page: Page):
-    return page.get_by_role("heading", name=DIALOG_TITLE)
+def _is_dialog_open(page: Page) -> bool:
+    """判断 widget 对话是否已打开（多种探针，避免 heading role 偶发匹配不到）。"""
+    probes = (
+        page.get_by_role("heading", name=DIALOG_TITLE),
+        page.get_by_text(DIALOG_TITLE, exact=True),
+        page.locator("h1").filter(has_text=DIALOG_TITLE),
+        page.get_by_placeholder(re.compile(r"type your message", re.I)),
+    )
+    for probe in probes:
+        try:
+            if probe.count() > 0 and probe.first.is_visible():
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _wait_dialog_open(page: Page, timeout_ms: int) -> bool:
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        if _is_dialog_open(page):
+            return True
+        page.wait_for_timeout(200)
+    return False
 
 
 # 在页面脚本里查找图标（含 open shadowRoot），避免 element handle  detached
@@ -221,24 +244,11 @@ def wait_icon_and_open_widget(
         if page.locator(ICON).count() > 0:
             saw_icon = True
         if _try_click_icon(page):
-            try:
-                _dialog_locator(page).wait_for(
-                    state="visible",
-                    timeout=DIALOG_AFTER_CLICK_MS,
-                )
+            if _wait_dialog_open(page, DIALOG_AFTER_CLICK_MS):
                 return
-            except Exception:
-                pass
         page.wait_for_timeout(150)
 
-    match_count = page.locator(ICON).count()
-    dialog_visible = False
-    try:
-        dialog_visible = _dialog_locator(page).is_visible()
-    except Exception:
-        pass
-
-    if dialog_visible:
+    if _is_dialog_open(page):
         return
 
     if saw_icon or match_count > 0:
