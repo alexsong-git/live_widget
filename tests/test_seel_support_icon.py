@@ -11,7 +11,7 @@ import openpyxl
 import pytest
 from playwright.sync_api import Page
 
-ICON = ".seel_ai_support_icon.inline-block"
+ICON = ".seel_ai_support_icon"
 DIALOG_TITLE = "Live Support"
 EXCEL = Path(__file__).resolve().parent.parent / "live_widget登陆店铺.xlsx"
 
@@ -141,23 +141,22 @@ def _wait_visible(
         )
 
 
-def force_click_icon(page: Page, icon, shop_url: str, shop_id: str) -> None:
+def _icon_locator(page: Page):
+    return page.locator(ICON).first
+
+
+def force_click_icon(page: Page, icon, shop_url: str, shop_id: str) -> bool:
     """无视遮挡层，对 widget 图标强行触发点击。"""
     try:
         icon.evaluate("el => el.click()")
-        return
+        return True
     except Exception:
         pass
     try:
         icon.click(force=True, timeout=3_000)
-        return
+        return True
     except Exception:
-        _fail_brief(
-            page,
-            "强行点击 Seel 图标失败（JS click / force）",
-            shop_url=shop_url,
-            shop_id=shop_id,
-        )
+        return False
 
 
 def wait_icon_and_force_click(
@@ -167,19 +166,31 @@ def wait_icon_and_force_click(
     *,
     timeout_ms: int = 90_000,
 ) -> None:
-    """轮询 DOM，图标一挂载就立刻强行点击。"""
-    icon = page.locator(ICON).first
+    """轮询 DOM，图标一可见就立刻强行点击。"""
     deadline = time.monotonic() + timeout_ms / 1000
+    saw_visible = False
     while time.monotonic() < deadline:
+        icon = _icon_locator(page)
         try:
-            icon.wait_for(state="attached", timeout=200)
-            force_click_icon(page, icon, shop_url, shop_id)
-            return
+            icon.wait_for(state="visible", timeout=300)
+            saw_visible = True
         except Exception:
             page.wait_for_timeout(50)
+            continue
+        if force_click_icon(page, icon, shop_url, shop_id):
+            return
+        page.wait_for_timeout(100)
+    match_count = page.locator(ICON).count()
+    if saw_visible or match_count > 0:
+        _fail_brief(
+            page,
+            f"Seel 图标已在页面上（选择器 {ICON!r} 匹配 {match_count} 个），但强行点击未成功",
+            shop_url=shop_url,
+            shop_id=shop_id,
+        )
     _fail_brief(
         page,
-        f"未找到 Seel 图标（选择器 {ICON!r}）",
+        f"未找到 Seel 图标（选择器 {ICON!r}，匹配 {match_count} 个）",
         shop_url=shop_url,
         shop_id=shop_id,
     )
