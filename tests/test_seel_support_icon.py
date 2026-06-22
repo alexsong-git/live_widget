@@ -13,6 +13,8 @@ from playwright.sync_api import Page
 
 ICON = ".seel_ai_support_icon"
 DIALOG_TITLE = "Live Support"
+ICON_WAIT_MS = 120_000
+DIALOG_AFTER_CLICK_MS = 3_000
 EXCEL = Path(__file__).resolve().parent.parent / "live_widget登陆店铺.xlsx"
 
 URL_HEADER = "URL"
@@ -121,70 +123,129 @@ def _fail_brief(
     pytest.fail("\n".join(lines), pytrace=False)
 
 
-def _wait_visible(
-    page: Page,
-    shop_url: str,
-    locator,
-    *,
-    timeout_ms: int,
-    summary: str,
-    shop_id: str,
-) -> None:
-    try:
-        locator.wait_for(state="visible", timeout=timeout_ms)
-    except Exception:
-        _fail_brief(
-            page,
-            f"{summary}（{timeout_ms // 1000}s 超时）",
-            shop_url=shop_url,
-            shop_id=shop_id,
-        )
-
-
 def _icon_locator(page: Page):
     return page.locator(ICON).first
 
 
-def force_click_icon(page: Page, icon, shop_url: str, shop_id: str) -> bool:
-    """无视遮挡层，对 widget 图标强行触发点击。"""
+def _dialog_locator(page: Page):
+    return page.get_by_role("heading", name=DIALOG_TITLE)
+
+
+# 在页面脚本里查找图标（含 open shadowRoot），避免 element handle  detached
+_CLICK_ICON_JS = """
+() => {
+  function findIcon(root) {
+    const el = root.querySelector('.seel_ai_support_icon');
+    if (el) return el;
+    for (const node of root.querySelectorAll('*')) {
+      if (node.shadowRoot) {
+        const found = findIcon(node.shadowRoot);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  const el = findIcon(document);
+  if (!el) return false;
+  el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  if (typeof el.click === 'function') el.click();
+  return true;
+}
+"""
+
+
+def settle_after_goto(page: Page) -> None:
+    """commit 之后等 DOM 就绪（含自定义域名跳转），便于异步 widget 脚本执行。"""
     try:
-        icon.evaluate("el => el.click()")
+        page.wait_for_load_state("domcontentloaded", timeout=45_000)
+    except Exception:
+        pass
+
+
+def _try_click_icon(page: Page) -> bool:
+    """多种方式强行点击 widget 图标；每次调用都重新定位 DOM。"""
+    try:
+        if page.evaluate(_CLICK_ICON_JS):
+            return True
+    except Exception:
+        pass
+
+    try:
+        icon = _icon_locator(page)
+        icon.wait_for(state="visible", timeout=2_000)
+        icon.scroll_into_view_if_needed(timeout=2_000)
+    except Exception:
+        return False
+
+    try:
+        icon.dispatch_event("click")
         return True
     except Exception:
         pass
     try:
-        icon.click(force=True, timeout=3_000)
+        icon.evaluate(
+            "el => { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); el.click(); }"
+        )
         return True
     except Exception:
-        return False
+        pass
+    try:
+        icon.click(force=True, timeout=2_000)
+        return True
+    except Exception:
+        pass
+    try:
+        box = icon.bounding_box()
+        if box and box["width"] > 0 and box["height"] > 0:
+            page.mouse.click(
+                box["x"] + box["width"] / 2,
+                box["y"] + box["height"] / 2,
+            )
+            return True
+    except Exception:
+        pass
+    return False
 
 
-def wait_icon_and_force_click(
+def wait_icon_and_open_widget(
     page: Page,
     shop_url: str,
     shop_id: str,
     *,
-    timeout_ms: int = 90_000,
+    timeout_ms: int = ICON_WAIT_MS,
 ) -> None:
-    """轮询 DOM，图标一可见就立刻强行点击。"""
+    """等图标出现并点击，直到对话标题出现或超时。"""
     deadline = time.monotonic() + timeout_ms / 1000
-    saw_visible = False
+    saw_icon = False
     while time.monotonic() < deadline:
-        icon = _icon_locator(page)
-        try:
-            icon.wait_for(state="visible", timeout=300)
-            saw_visible = True
-        except Exception:
-            page.wait_for_timeout(50)
-            continue
-        if force_click_icon(page, icon, shop_url, shop_id):
-            return
-        page.wait_for_timeout(100)
+        if page.locator(ICON).count() > 0:
+            saw_icon = True
+        if _try_click_icon(page):
+            try:
+                _dialog_locator(page).wait_for(
+                    state="visible",
+                    timeout=DIALOG_AFTER_CLICK_MS,
+                )
+                return
+            except Exception:
+                pass
+        page.wait_for_timeout(150)
+
     match_count = page.locator(ICON).count()
-    if saw_visible or match_count > 0:
+    dialog_visible = False
+    try:
+        dialog_visible = _dialog_locator(page).is_visible()
+    except Exception:
+        pass
+
+    if dialog_visible:
+        return
+
+    if saw_icon or match_count > 0:
         _fail_brief(
             page,
-            f"Seel 图标已在页面上（选择器 {ICON!r} 匹配 {match_count} 个），但强行点击未成功",
+            f"Seel 图标已在页面上（选择器 {ICON!r} 匹配 {match_count} 个），"
+            f"但 {DIALOG_AFTER_CLICK_MS // 1000}s 内未打开对话（{DIALOG_TITLE!r}）",
             shop_url=shop_url,
             shop_id=shop_id,
         )
@@ -232,17 +293,9 @@ def test_live_widget(page: Page, shop_url: str, password: str, shop_id: str) -> 
     # commit：收到响应、导航提交后即返回，不等待 DOMContentLoaded（部分店极慢但 widget 已注入）
     page.goto(shop_url, wait_until="commit", timeout=60_000)
     enter_if_password(page, password, shop_id)
+    settle_after_goto(page)
 
-    wait_icon_and_force_click(page, shop_url, shop_id)
-
-    _wait_visible(
-        page,
-        shop_url,
-        page.get_by_role("heading", name=DIALOG_TITLE),
-        timeout_ms=30_000,
-        summary=f"点击图标后未出现对话标题 {DIALOG_TITLE!r}（heading）",
-        shop_id=shop_id,
-    )
+    wait_icon_and_open_widget(page, shop_url, shop_id)
     page.wait_for_timeout(3_000)
     allure.attach(
         page.screenshot(full_page=False),
