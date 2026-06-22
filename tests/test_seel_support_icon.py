@@ -18,9 +18,10 @@ EXCEL = Path(__file__).resolve().parent.parent / "live_widget登陆店铺.xlsx"
 URL_HEADER = "URL"
 PWD_HEADER = "PASSWORD"
 STATUS_HEADER = "STATUS"
+ID_HEADER = "ID"
 
 
-def read_shops() -> list[tuple[str, str]]:
+def read_shops() -> list[tuple[str, str, str]]:
     """读 Excel：第 1 行表头匹配列名（忽略大小写、首尾空格），须含 URL、PASSWORD；有 STATUS 列时仅保留值为 0 的行。"""
     if not EXCEL.is_file():
         raise FileNotFoundError(f"缺少数据文件，请放到项目根目录: {EXCEL.name}")
@@ -65,8 +66,9 @@ def read_shops() -> list[tuple[str, str]]:
         url_i = col[URL_HEADER.casefold()]
         pwd_i = col[PWD_HEADER.casefold()]
         status_i = col.get(STATUS_HEADER.casefold())
+        id_i = col.get(ID_HEADER.casefold())
 
-        rows: list[tuple[str, str]] = []
+        rows: list[tuple[str, str, str]] = []
         for cells in row_iter:
             if not cells:
                 continue
@@ -81,7 +83,9 @@ def read_shops() -> list[tuple[str, str]]:
                 continue
             raw_pwd = cells[pwd_i] if pwd_i < len(cells) else None
             pwd = "" if raw_pwd is None else str(raw_pwd).strip()
-            rows.append((url, pwd))
+            raw_id = cells[id_i] if id_i is not None and id_i < len(cells) else None
+            shop_id = "" if raw_id is None else str(raw_id).strip()
+            rows.append((url, pwd, shop_id))
     finally:
         wb.close()
 
@@ -99,9 +103,17 @@ def read_shops() -> list[tuple[str, str]]:
 SHOPS = read_shops()
 
 
-def _fail_brief(page: Page, summary: str, *, shop_url: str | None = None) -> None:
+def _fail_brief(
+    page: Page,
+    summary: str,
+    *,
+    shop_url: str | None = None,
+    shop_id: str | None = None,
+) -> None:
     """失败时只输出几行关键信息，避免 expect() 附带整页无障碍树。"""
     lines = [summary.rstrip()]
+    if shop_id is not None:
+        lines.append(f"当前 ID: {shop_id!r}")
     if shop_url:
         lines.append(f"表格 URL host: {urlparse(shop_url).netloc!r}")
     lines.append(f"当前 page.url: {page.url!r}")
@@ -116,14 +128,20 @@ def _wait_visible(
     *,
     timeout_ms: int,
     summary: str,
+    shop_id: str,
 ) -> None:
     try:
         locator.wait_for(state="visible", timeout=timeout_ms)
     except Exception:
-        _fail_brief(page, f"{summary}（{timeout_ms // 1000}s 超时）", shop_url=shop_url)
+        _fail_brief(
+            page,
+            f"{summary}（{timeout_ms // 1000}s 超时）",
+            shop_url=shop_url,
+            shop_id=shop_id,
+        )
 
 
-def force_click_icon(page: Page, icon, shop_url: str) -> None:
+def force_click_icon(page: Page, icon, shop_url: str, shop_id: str) -> None:
     """无视遮挡层，对 widget 图标强行触发点击。"""
     try:
         icon.evaluate("el => el.click()")
@@ -134,12 +152,18 @@ def force_click_icon(page: Page, icon, shop_url: str) -> None:
         icon.click(force=True, timeout=3_000)
         return
     except Exception:
-        _fail_brief(page, "强行点击 Seel 图标失败（JS click / force）", shop_url=shop_url)
+        _fail_brief(
+            page,
+            "强行点击 Seel 图标失败（JS click / force）",
+            shop_url=shop_url,
+            shop_id=shop_id,
+        )
 
 
 def wait_icon_and_force_click(
     page: Page,
     shop_url: str,
+    shop_id: str,
     *,
     timeout_ms: int = 90_000,
 ) -> None:
@@ -149,7 +173,7 @@ def wait_icon_and_force_click(
     while time.monotonic() < deadline:
         try:
             icon.wait_for(state="attached", timeout=200)
-            force_click_icon(page, icon, shop_url)
+            force_click_icon(page, icon, shop_url, shop_id)
             return
         except Exception:
             page.wait_for_timeout(50)
@@ -157,35 +181,48 @@ def wait_icon_and_force_click(
         page,
         f"未找到 Seel 图标（选择器 {ICON!r}）",
         shop_url=shop_url,
+        shop_id=shop_id,
     )
 
 
-def enter_if_password(page: Page, password: str) -> None:
+def enter_if_password(page: Page, password: str, shop_id: str) -> None:
     if "/password" not in page.url:
         return
     if not password:
-        _fail_brief(page, "进了密码页，但 Excel 里该行 PASSWORD 列为空")
+        _fail_brief(
+            page,
+            "进了密码页，但 Excel 里该行 PASSWORD 列为空",
+            shop_id=shop_id,
+        )
     page.locator("#password").fill(password)
     page.get_by_role("button", name="Enter").click()
     deadline = time.monotonic() + 30.0
     while "/password" in page.url:
         if time.monotonic() > deadline:
-            _fail_brief(page, "密码页：点 Enter 后 30s 内 URL 仍含 /password")
+            _fail_brief(
+                page,
+                "密码页：点 Enter 后 30s 内 URL 仍含 /password",
+                shop_id=shop_id,
+            )
         page.wait_for_timeout(200)
 
 
 @pytest.mark.parametrize(
-    "shop_url,password",
+    "shop_url,password,shop_id",
     SHOPS,
-    ids=[urlparse(u).netloc for u, _ in SHOPS],
+    ids=[
+        sid if sid else urlparse(url).netloc
+        for url, _, sid in SHOPS
+    ],
 )
-def test_live_widget(page: Page, shop_url: str, password: str) -> None:
-    allure.dynamic.title(f"Seel widget — {urlparse(shop_url).netloc}")
+def test_live_widget(page: Page, shop_url: str, password: str, shop_id: str) -> None:
+    title = shop_id or urlparse(shop_url).netloc
+    allure.dynamic.title(f"Seel widget — {title}")
     # commit：收到响应、导航提交后即返回，不等待 DOMContentLoaded（部分店极慢但 widget 已注入）
     page.goto(shop_url, wait_until="commit", timeout=60_000)
-    enter_if_password(page, password)
+    enter_if_password(page, password, shop_id)
 
-    wait_icon_and_force_click(page, shop_url)
+    wait_icon_and_force_click(page, shop_url, shop_id)
 
     _wait_visible(
         page,
@@ -193,6 +230,7 @@ def test_live_widget(page: Page, shop_url: str, password: str) -> None:
         page.get_by_role("heading", name=DIALOG_TITLE),
         timeout_ms=30_000,
         summary=f"点击图标后未出现对话标题 {DIALOG_TITLE!r}（heading）",
+        shop_id=shop_id,
     )
     page.wait_for_timeout(3_000)
     allure.attach(
