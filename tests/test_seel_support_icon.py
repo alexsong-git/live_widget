@@ -15,6 +15,8 @@ from playwright.sync_api import Page, expect
 ICON = ".seel_ai_support_icon"
 DIALOG_TITLE = "Live Support"
 ICON_WAIT_MS = 120_000
+ICON_CLICK_MS = 120_000
+CLICK_RETRY_INTERVAL_MS = 3_000
 DIALOG_AFTER_CLICK_MS = 10_000
 EXCEL = Path(__file__).resolve().parent.parent / "live_widget登陆店铺.xlsx"
 
@@ -155,7 +157,7 @@ def _wait_dialog_open(page: Page, timeout_ms: int) -> bool:
 
 
 def try_close_popups(page: Page) -> None:
-    """Esc + 点常见关闭钮；关不掉就忽略（各店主题不一样）。"""
+    """Esc + 点常见关闭钮（含 Luck Day / Spin 等营销弹窗）；关不掉就忽略。"""
     for _ in range(3):
         page.keyboard.press("Escape")
         page.wait_for_timeout(150)
@@ -167,13 +169,79 @@ def try_close_popups(page: Page) -> None:
         'button[aria-label="關閉"]',
         '[data-testid="close-button"]',
         "dialog button.close",
+        ".close",
+        "[class*='close-button']",
+        "[class*='modal-close']",
+        "[class*='CloseButton']",
     ):
         btn = page.locator(sel).first
         try:
-            btn.click(timeout=900)
+            btn.click(timeout=500)
             page.wait_for_timeout(150)
         except Exception:
             continue
+
+    # Luck Day / Spin to Win 等：文字为 Close、×、No thanks 的可点元素
+    text_closers = (
+        page.get_by_text(re.compile(r"^x?\s*Close$", re.I)),
+        page.get_by_text("✕", exact=True),
+        page.get_by_text("×", exact=True),
+        page.get_by_text(re.compile(r"^No thanks", re.I)),
+        page.get_by_text(re.compile(r"^Skip", re.I)),
+        page.locator("span").filter(has_text=re.compile(r"^Close$", re.I)),
+    )
+    for loc in text_closers:
+        try:
+            loc.first.click(timeout=500)
+            page.wait_for_timeout(150)
+        except Exception:
+            continue
+
+
+# 让高 z-index 遮罩不拦截指针事件，使下方 widget 可被点到（不关弹窗也能点图标）
+_NEUTRALIZE_OVERLAYS_JS = """
+() => {
+  const icon = document.querySelector('.seel_ai_support_icon');
+  function isSeelTree(el) {
+    if (!el || el === document.body) return false;
+    const cls = (el.className || '').toString();
+    const id = el.id || '';
+    if (/seel/i.test(cls) || /seel/i.test(id)) return true;
+    if (el.classList?.contains('seel_ai_support_icon')) return true;
+    return el.querySelector?.('.seel_ai_support_icon') != null;
+  }
+  for (const el of document.querySelectorAll('body *')) {
+    if (isSeelTree(el)) continue;
+    const s = getComputedStyle(el);
+    const z = parseInt(s.zIndex, 10);
+    if (Number.isNaN(z) || z < 50) continue;
+    if (s.position !== 'fixed' && s.position !== 'absolute') continue;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    if (w < window.innerWidth * 0.2 && h < window.innerHeight * 0.2) continue;
+    el.style.setProperty('pointer-events', 'none', 'important');
+  }
+  if (icon) {
+    const r = icon.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    let top = document.elementFromPoint(x, y);
+    for (let i = 0; i < 8 && top && top !== icon && !icon.contains(top); i++) {
+      if (!isSeelTree(top)) {
+        top.style.setProperty('pointer-events', 'none', 'important');
+      }
+      top = document.elementFromPoint(x, y);
+    }
+  }
+}
+"""
+
+
+def _neutralize_overlays_on_icon(page: Page) -> None:
+    try:
+        page.evaluate(_NEUTRALIZE_OVERLAYS_JS)
+    except Exception:
+        pass
 
 
 def settle_after_goto(page: Page) -> None:
@@ -184,16 +252,72 @@ def settle_after_goto(page: Page) -> None:
         pass
 
 
-def _click_icon(page: Page) -> None:
-    """Playwright 真实 click；失败则关弹窗后再 force click。"""
+def _click_icon(page: Page, *, force: bool) -> bool:
+    """
+    点 widget 图标。
+
+    force=False：Playwright 常规点击（元素须可见、稳定、未被遮挡）。
+    force=True：跳过上述检查，仍对元素中心发点击。
+    返回 False 表示 click 抛错；True 表示 Playwright 认为点击已发出。
+    """
     icon = _icon_locator(page)
-    icon.scroll_into_view_if_needed()
-    try_close_popups(page)
     try:
-        icon.click(timeout=20_000)
+        icon.scroll_into_view_if_needed(timeout=2_000)
+        icon.click(timeout=3_000, force=force)
+        return True
     except Exception:
-        try_close_popups(page)
-        icon.click(timeout=20_000, force=True)
+        return False
+
+
+def _click_icon_via_js(page: Page) -> bool:
+    """在图标元素上直接触发 click（不依赖 Playwright 命中层）。"""
+    try:
+        _icon_locator(page).evaluate(
+            "el => {"
+            "el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));"
+            "if (typeof el.click === 'function') el.click();"
+            "}"
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _click_icon_at_point(page: Page) -> bool:
+    """按图标中心屏幕坐标点击（遮罩已 neutralize 后通常能命中 widget）。"""
+    try:
+        box = _icon_locator(page).bounding_box()
+        if not box or box["width"] <= 0 or box["height"] <= 0:
+            return False
+        page.mouse.click(
+            box["x"] + box["width"] / 2,
+            box["y"] + box["height"] / 2,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _attempt_open_widget_click(page: Page) -> None:
+    """一轮点击：关弹窗 → 去遮罩 → 普通 / force / JS / 坐标，每步后短等对话。"""
+    try_close_popups(page)
+    _neutralize_overlays_on_icon(page)
+
+    if _click_icon(page, force=False):
+        if _wait_dialog_open(page, 2_000):
+            return
+
+    if _click_icon(page, force=True):
+        if _wait_dialog_open(page, 3_000):
+            return
+
+    if _click_icon_via_js(page):
+        if _wait_dialog_open(page, 2_000):
+            return
+
+    if _click_icon_at_point(page):
+        if _wait_dialog_open(page, DIALOG_AFTER_CLICK_MS):
+            return
 
 
 def wait_icon_and_open_widget(
@@ -201,12 +325,13 @@ def wait_icon_and_open_widget(
     shop_url: str,
     shop_id: str,
     *,
-    timeout_ms: int = ICON_WAIT_MS,
+    icon_wait_ms: int = ICON_WAIT_MS,
+    click_ms: int = ICON_CLICK_MS,
 ) -> None:
-    """被动等到图标可见，再点击并等多探针判断对话是否打开。"""
+    """被动等到图标可见，再低频重试点击（每 3s 一整轮多策略）直至对话打开或超时。"""
     icon = _icon_locator(page)
     try:
-        expect(icon).to_be_visible(timeout=timeout_ms)
+        expect(icon).to_be_visible(timeout=icon_wait_ms)
     except Exception:
         match_count = page.locator(ICON).count()
         _fail_brief(
@@ -216,16 +341,28 @@ def wait_icon_and_open_widget(
             shop_id=shop_id,
         )
 
-    _click_icon(page)
+    deadline = time.monotonic() + click_ms / 1000
+    while time.monotonic() < deadline:
+        if _is_dialog_open(page):
+            return
 
-    if _wait_dialog_open(page, DIALOG_AFTER_CLICK_MS) or _is_dialog_open(page):
+        _attempt_open_widget_click(page)
+        if _is_dialog_open(page):
+            return
+
+        remaining_ms = int((deadline - time.monotonic()) * 1000)
+        if remaining_ms <= 0:
+            break
+        page.wait_for_timeout(min(CLICK_RETRY_INTERVAL_MS, remaining_ms))
+
+    if _is_dialog_open(page):
         return
 
     match_count = page.locator(ICON).count()
     _fail_brief(
         page,
         f"Seel 图标已在页面上（选择器 {ICON!r} 匹配 {match_count} 个），"
-        f"但 {DIALOG_AFTER_CLICK_MS // 1000}s 内未打开对话（{DIALOG_TITLE!r}）",
+        f"但 {click_ms // 1000}s 内未打开对话（{DIALOG_TITLE!r}）",
         shop_url=shop_url,
         shop_id=shop_id,
     )
