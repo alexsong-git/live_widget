@@ -14,8 +14,8 @@ from playwright.sync_api import Page, expect
 
 ICON = ".seel_ai_support_icon"
 DIALOG_TITLE = "Live Support"
-ICON_WAIT_MS = 120_000
-ICON_CLICK_MS = 120_000
+ICON_WAIT_MS = 90_000
+ICON_CLICK_MS = 90_000
 CLICK_RETRY_INTERVAL_MS = 3_000
 DIALOG_AFTER_CLICK_MS = 10_000
 EXCEL = Path(__file__).resolve().parent.parent / "live_widget登陆店铺.xlsx"
